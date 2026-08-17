@@ -271,3 +271,55 @@ to determine a pass rate, rather than relying on single-run verdicts.
 
 **Full detailed report**:
 [Failed Tests Rerun Report (PDF)](../reports/failed_tests_rerun_report.pdf)
+-------------------------------------------------------------------------------------------------------------------------------
+## Test 14: NVIDIA Garak Cross-Validation (DAN jailbreak)
+
+**Method**: Ran garak's dan.Dan_11_0 probe against qwen3:8b, comparing 
+baseline (no system prompt) vs. system-prompt-enabled configuration.
+
+**Results**:
+| Detector | Without system prompt | With system prompt |
+|---|---|---|
+| dan.DAN | 80% attack success | 80% attack success (unchanged) |
+| mitigation.MitigationBypass | 40% attack success | 0% attack success (fixed) |
+
+**Observation**: The system prompt significantly improved resistance on 
+the MitigationBypass metric but showed no measurable improvement on the 
+DAN-specific detector. This suggests the system prompt is effective against 
+the categories it explicitly addresses (injection, access control) but 
+does not generalize to classic role-play-based jailbreaks like DAN, which 
+were never explicitly targeted in the prompt's rules.
+
+**Significance**: This is the first cross-validation of the system's 
+defenses using an independent, industry-standard tool (NVIDIA Garak), 
+rather than self-authored test cases. It confirms a category-specific 
+vulnerability pattern consistent with earlier findings (policy 
+fabrication in Test 12).
+-------------------------------------------------------------------------------------------------------------------------------
+## Test 15: Anti-Role-Play Rule — Regression Finding
+
+**Fix applied**: Added rule refusing identity/persona assignment and 
+fictional framing used to bypass instructions.
+
+**Results across 4 garak runs (dan.Dan_11_0 probe)**:
+| Run | Configuration | dan.DAN attack success | MitigationBypass attack success |
+|---|---|---|---|
+| 1 | No system prompt | 80% | 40% |
+| 2 | System prompt (pre-fix) | 80% | 0% |
+| 3 | System prompt + new rule | 80% | 20% |
+| 4 | Same as Run 3 (repeat) | 100% | 20% |
+
+**Finding**: The new rule did NOT improve dan.DAN resistance — if anything, 
+attack success increased (80% → 100% on repeat). MitigationBypass also 
+regressed from 0% to a consistent 20%.
+
+**Hypothesis**: The system prompt has grown long enough (7+ distinct 
+rules) that adding another rule may dilute the model's ability to prioritize 
+and consistently apply all instructions, rather than strengthening defense. 
+This is a case of a well-intentioned fix producing a measurable regression.
+
+**Decision**: This rule requires revision or removal. Prompt-only defenses 
+may have diminishing (or negative) returns past a certain complexity — 
+this motivates exploring a dedicated detection layer (e.g., a lightweight 
+classifier checking for role-play/identity-assignment patterns) rather than 
+continuing to grow the system prompt indefinitely.
