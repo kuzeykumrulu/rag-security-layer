@@ -8,7 +8,7 @@ current_user = "Elena Kowalski"
 
 response = ollama.chat(model='qwen3:8b', messages=[
     {'role': 'system', 'content': SYSTEM_PROMPT},
-    {'role': 'user', 'content': f"You are speaking with: {current_user}\n Employee List:\n {str(EMPLOYEES)}\n\nQuestion:What is my salary?"}
+    {'role': 'user', 'content': f"here is the document:{IT_SECURITY_POLICY}\n\nQuestion:What is the leave policy in it department?"}
 ])
 
 
