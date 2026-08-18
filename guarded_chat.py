@@ -1,0 +1,114 @@
+"""The single place that wires the input filter, the Ollama call, and the
+output filter together. driver.py calls this instead of talking to
+ollama.chat() directly, so a fix to the filtering logic only needs to be
+made once. garak_plugins/ragsec.py applies the same two filter classes
+around its own model call (it can't reuse this module's ask() directly --
+garak owns its own retry/backoff wrapper around the model call -- but it
+imports InjectionFilter/OutputInjectionFilter from the same detection/
+modules, so the logic itself is not duplicated).
+
+Measurement-first design: even when the input filter flags a question as
+a likely injection attempt, the model is still called (raw_output always
+reflects what the model actually said) -- this project measures attack
+success rate, so silently skipping the call would throw away the exact
+data point being studied. final_output is what a real caller should show
+the end user: a safe refusal whenever either filter caught something,
+regardless of what the model said.
+"""
+
+import json
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+import ollama
+
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from system_promt import SYSTEM_PROMPT  # noqa: E402
+from document import FAKE_DOCUMENT, IT_SECURITY_POLICY  # noqa: E402
+from employees import EMPLOYEES  # noqa: E402
+from detection.injection_filter_input import PromptInjectionFilter  # noqa: E402
+from detection.injection_filter_output import (  # noqa: E402
+    OutputInjectionFilter,
+    FilterResult,
+    SAFE_REFUSAL,
+)
+
+
+def build_context(current_user: str, include_documents: bool = True, include_employees: bool = True) -> str:
+    parts = []
+    if include_documents:
+        parts.append(f"Here is a document:{FAKE_DOCUMENT}")
+        parts.append(f"Here is a document:{IT_SECURITY_POLICY}")
+    if include_employees:
+        parts.append("Here are the employee records:\n" + json.dumps(EMPLOYEES, indent=2, ensure_ascii=False))
+    parts.append(f"You are speaking with: {current_user}")
+    return "\n\n".join(parts)
+
+
+@dataclass
+class GuardedChatResult:
+    question: str
+    current_user: str
+    input_filter_triggered: bool
+    output_filter_findings: List[FilterResult] = field(default_factory=list)
+    raw_output: Optional[str] = None   # what the model actually said (for measurement)
+    final_output: str = ""             # what a real caller should be shown
+    error: Optional[str] = None
+
+    @property
+    def blocked(self) -> bool:
+        return self.input_filter_triggered or bool(self.output_filter_findings)
+
+
+class GuardedChat:
+    """Wraps ollama.chat() with the input filter (before) and the output
+    filter (after). One call to ask() per question."""
+
+    def __init__(self, model: str = "qwen3:8b", timeout: int = 180):
+        self.model = model
+        self.client = ollama.Client(timeout=timeout)
+        self.input_filter = PromptInjectionFilter()
+        self.output_filter = OutputInjectionFilter()
+
+    def ask(
+        self,
+        question: str,
+        current_user: str = "Elena Kowalski",
+        include_documents: bool = True,
+        include_employees: bool = True,
+    ) -> GuardedChatResult:
+        input_triggered = self.input_filter.detect_injection(question)
+
+        context = build_context(current_user, include_documents, include_employees)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"{context}\n\nQuestion: {question}"},
+        ]
+
+        try:
+            response = self.client.chat(model=self.model, messages=messages)
+            raw_output = response["message"]["content"]
+        except Exception as e:
+            return GuardedChatResult(
+                question=question,
+                current_user=current_user,
+                input_filter_triggered=input_triggered,
+                error=str(e),
+                final_output=SAFE_REFUSAL,
+            )
+
+        findings = self.output_filter.scan(raw_output, current_user)
+        result = GuardedChatResult(
+            question=question,
+            current_user=current_user,
+            input_filter_triggered=input_triggered,
+            output_filter_findings=findings,
+            raw_output=raw_output,
+        )
+        result.final_output = SAFE_REFUSAL if result.blocked else raw_output
+        return result

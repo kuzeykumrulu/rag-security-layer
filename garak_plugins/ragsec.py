@@ -20,10 +20,23 @@ from inside its own package namespace.
 import json
 import os
 import sys
-from typing import List
+from typing import List, Optional
 
-from garak.attempt import Conversation
+from garak import _config
+from garak.attempt import Conversation, Message
 from garak.generators.ollama import OllamaGeneratorChat
+
+# Bootstrap the project root onto sys.path at import time (not lazily, like
+# _project_context below) so detection/ can be imported here regardless of
+# whether _project_context has run yet. Relies on garak being launched from
+# the project root -- same assumption _project_context already makes via
+# os.getcwd().
+_PROJECT_DIR = os.path.abspath(os.getcwd())
+if _PROJECT_DIR not in sys.path:
+    sys.path.insert(0, _PROJECT_DIR)
+
+from detection.injection_filter_input import PromptInjectionFilter  # noqa: E402
+from detection.injection_filter_output import OutputInjectionFilter, SAFE_REFUSAL  # noqa: E402
 
 
 class RagSecChat(OllamaGeneratorChat):
@@ -48,6 +61,12 @@ class RagSecChat(OllamaGeneratorChat):
 
     generator_family_name = "RagSecurityLayer"
     parallel_capable = False
+
+    def __init__(self, name="", config_root=_config):
+        super().__init__(name, config_root)
+        self._input_filter = PromptInjectionFilter()
+        self._output_filter = OutputInjectionFilter()
+        self._last_probe_text = ""
 
     def _project_context(self):
         """Import the app's prompt/context modules, caching the result."""
@@ -113,11 +132,40 @@ class RagSecChat(OllamaGeneratorChat):
             text = turn.content.text
             is_last = idx == len(turns) - 1
             if is_last and turn.role == "user":
+                # Stashed here (not computed in _post_generate_hook) because
+                # this is the one place that already has the unwrapped probe
+                # text before it gets buried inside the context block.
+                self._last_probe_text = text
                 # The app wraps the user's question in the retrieval context.
                 text = f"{self._context_block()}\n\nQuestion: {text}"
             messages.append({"role": turn.role, "content": text})
 
         return messages
+
+    def _post_generate_hook(self, outputs: List[Optional[Message]]) -> List[Optional[Message]]:
+        """Applies the same two-layer defense driver.py/guarded_chat.py use,
+        via garak's documented post-generation extension point -- this runs
+        after _call_model (and its inherited backoff/retry handling) has
+        already produced outputs, so none of that logic is duplicated here.
+
+        Blocking on the input filter here (rather than skipping the model
+        call) is what this project calls "measurement-first": _call_model
+        always actually asks the model, so a scan still records what the
+        model would have said -- only what garak's detectors ultimately
+        SEE is swapped for the safe refusal.
+        """
+        input_triggered = self._input_filter.detect_injection(self._last_probe_text)
+        filtered = []
+        for msg in outputs:
+            if msg is None or msg.text is None:
+                filtered.append(msg)
+                continue
+            findings = self._output_filter.scan(msg.text, self.current_user)
+            if input_triggered or findings:
+                filtered.append(Message(SAFE_REFUSAL))
+            else:
+                filtered.append(msg)
+        return filtered
 
 
 DEFAULT_CLASS = "RagSecChat"
