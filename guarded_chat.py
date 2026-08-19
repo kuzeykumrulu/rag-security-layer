@@ -91,7 +91,10 @@ class GuardedChat:
         ]
 
         try:
-            response = self.client.chat(model=self.model, messages=messages)
+            # keep_alive pinned to avoid load/unload thrashing on the GPU
+            # during back-to-back batch calls -- see garak_plugins/ragsec.py
+            # for the full explanation (same fix, same reason).
+            response = self.client.chat(model=self.model, messages=messages, keep_alive="60m")
             raw_output = response["message"]["content"]
         except Exception as e:
             return GuardedChatResult(

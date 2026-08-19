@@ -22,9 +22,12 @@ import os
 import sys
 from typing import List, Optional
 
+import backoff
 from garak import _config
 from garak.attempt import Conversation, Message
-from garak.generators.ollama import OllamaGeneratorChat
+from garak.exception import GeneratorBackoffTrigger
+from garak.generators.ollama import OllamaGeneratorChat, _give_up
+from httpx import TimeoutException
 
 # Bootstrap the project root onto sys.path at import time (not lazily, like
 # _project_context below) so detection/ can be imported here regardless of
@@ -141,6 +144,47 @@ class RagSecChat(OllamaGeneratorChat):
             messages.append({"role": turn.role, "content": text})
 
         return messages
+
+    @backoff.on_exception(
+        backoff.fibo,
+        GeneratorBackoffTrigger,
+        max_value=70,
+        giveup=_give_up,
+    )
+    @backoff.on_predicate(
+        backoff.fibo, lambda ans: ans == [None] or len(ans) == 0, max_tries=3
+    )
+    def _call_model(
+        self, prompt: Conversation, generations_this_call: int = 1
+    ) -> List[Optional[Message]]:
+        """Identical to OllamaGeneratorChat._call_model (same backoff/retry
+        behavior) except it pins keep_alive="60m" on every request.
+
+        Without this, large scans (250+ prompts) can hit a load/unload
+        thrashing cycle: this generator's context is large (both documents +
+        50 employee records + the system prompt), so per-request processing
+        time is long enough that gaps between requests can exceed Ollama's
+        default 5-minute keep_alive, unloading the 5.6GB model from GPU
+        memory between requests and forcing a full reload each time --
+        observed to turn a ~20s/request pace into repeated multi-minute (once
+        multi-hour) stalls mid-scan.
+        """
+        messages = self._conversation_to_list(prompt)
+        try:
+            response = self.client.chat(
+                model=self.name,
+                messages=messages,
+                keep_alive="60m",
+            )
+        except Exception as e:
+            if isinstance(e, self.ollama.ResponseError) and e.status_code == 404:
+                raise e
+            backoff_exception_types = [self.ollama.ResponseError, TimeoutException]
+            for backoff_exception in backoff_exception_types:
+                if isinstance(e, backoff_exception):
+                    raise GeneratorBackoffTrigger from e
+            raise e
+        return [Message(response.get("message", {}).get("content", None))]
 
     def _post_generate_hook(self, outputs: List[Optional[Message]]) -> List[Optional[Message]]:
         """Applies the same two-layer defense driver.py/guarded_chat.py use,
