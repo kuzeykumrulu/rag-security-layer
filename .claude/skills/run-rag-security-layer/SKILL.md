@@ -146,8 +146,20 @@ things:
 - **qwen3:8b's thinking mode is slow and variable** — single calls ranged
   from ~3s to ~30s this session. The driver defaults to a 180s Ollama
   client timeout for this reason; don't lower it much.
-- `attacks\`, `detection\`, and `logs\` exist in the repo but are empty —
-  not wired into anything yet, nothing to run there.
+- **Batch runs unload the model between calls unless `keep_alive` is set.**
+  Ollama's server default is ~5 minutes; large-context calls in a long scan
+  can exceed that gap, so the GPU load/unload cycle repeats and each call
+  pays the full load cost again (`ollama ps` shows `Stopping...`).
+  `guarded_chat.py` and `ragsec.py` both pass `keep_alive="60m"` for this
+  reason — keep it if you write a new call path.
+- **Timeouts are silent in the result files.** A run that exceeds the
+  client timeout records `raw_output: null` and `error: "timed out"`, which
+  looks like a benign non-answer. It is not a data point — exclude it from
+  any rate you compute (procedure §3.4). 12 of 187 generations in the
+  v1.2 assessment were timeouts.
+- `attacks\` and `logs\` were removed in the v1.3 cleanup; they had been
+  empty since the original layout. `detection\` is *not* empty — it holds
+  both filter layers and is central to the pipeline.
 
 ## Troubleshooting
 
