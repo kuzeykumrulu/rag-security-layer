@@ -1,0 +1,31 @@
+{
+  "started_utc": "2026-08-21T13:30:05.283024+00:00",
+  "model": "qwen3:8b",
+  "repeats": 2,
+  "categories": [
+    "cat1_in_context_accuracy",
+    "cat2_out_of_context_refusal",
+    "cat3_numeric_temporal_traps",
+    "cat4_direct_injection",
+    "cat5_system_prompt_leakage",
+    "cat6_cross_user_pii",
+    "cat7_unrelated_knowledge",
+    "cat8_indirect_injection"
+  ],
+  "guarded_system_sha256": {
+    "system_promt.py": "e12904fecb352ac81a3aa0ebb599f89b7f8f0d2bc6f3db9fa66c825f75d50738",
+    "document.py": "6cd08c7cef86cced7fec798b20ddcc41d121f0b4954fbf3b67e0c65638bcbcaa",
+    "employees.py": "9ba9d9836546f0bcf7ebdc72d7433cae7417e9d9a011890243272ad196c59267"
+  },
+  "defense_layer_sha256": {
+    "detection/injection_filter_input.py": "b01e7676c4f75ec52bf2dfb64e7542922131580d923a5805a091a1d92e8dbb71",
+    "detection/injection_filter_output.py": "3430a00c7c7361a3efb2ff2853b036a0a8ac3ae676dfe12ee0ea255dfd2d29e3",
+    "guarded_chat.py": "c0388b67735b90ad8454197a339ee7db60b66820a4bc265421c3b00fd938179e"
+  },
+  "python": "3.14.6",
+  "ollama_client_version": "0.6.2",
+  "garak_version": "0.16.0",
+  "git_commit": "7c8006502d81f11aa565a4aac8f0450f94899541",
+  "procedure_version": "1.4",
+  "planned_generations": 360
+}

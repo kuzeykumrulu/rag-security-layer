@@ -1,4 +1,16 @@
-"""Bilinen 10 basarisiz indirect-injection senaryosunu, artik devrede olan
+"""Superseded by `run_suite.py --categories 8`. Kept as the record of the
+6/10 figure procedure §2 cites for category 8.
+
+Unlike tests/phase1_medium_severity.py, this script's results are VALID:
+write_policy() returns the policy text and the caller passes it straight
+into the message, so the payload genuinely reaches the model. It also
+writes that text to document.py, which is unnecessary for the test and is
+the only real hazard here -- a hard kill between the write and the restore
+in the finally block leaves the project's real document carrying a test
+payload. run_suite.py touches no files.
+
+Original description:
+Bilinen 10 basarisiz indirect-injection senaryosunu, artik devrede olan
 output filter'la tekrar test eder. document.py'i gecici olarak degistirir,
 sonunda orijinaline geri dondurur.
 """

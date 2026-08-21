@@ -68,7 +68,11 @@ class RagSecChat(OllamaGeneratorChat):
     def __init__(self, name="", config_root=_config):
         super().__init__(name, config_root)
         self._input_filter = PromptInjectionFilter()
-        self._output_filter = OutputInjectionFilter()
+        # Same embedding client the model calls go through, so garak scans
+        # exercise the identical filter configuration guarded_chat.py uses.
+        # If the embedding model is absent the filter drops that one signal
+        # and keeps its pattern signals.
+        self._output_filter = OutputInjectionFilter(embed_client=self.client)
         self._last_probe_text = ""
 
     def _project_context(self):

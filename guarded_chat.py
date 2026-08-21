@@ -16,6 +16,7 @@ the end user: a safe refusal whenever either filter caught something,
 regardless of what the model said.
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -39,11 +40,26 @@ from detection.injection_filter_output import (  # noqa: E402
 )
 
 
-def build_context(current_user: str, include_documents: bool = True, include_employees: bool = True) -> str:
+def build_context(
+    current_user: str,
+    include_documents: bool = True,
+    include_employees: bool = True,
+    documents: Optional[List[str]] = None,
+) -> str:
+    """Assembles the user turn.
+
+    `documents` replaces the project's own documents for this call only.
+    Indirect-injection tests need to put a poisoned document in front of the
+    model, and passing the text in is the only way to do that safely: the
+    previous harness rewrote document.py on disk instead, which silently did
+    nothing because this module binds FAKE_DOCUMENT and IT_SECURITY_POLICY at
+    import time and never reloads. Fifteen generations recorded a clean pass
+    without the payload ever reaching the model.
+    """
     parts = []
     if include_documents:
-        parts.append(f"Here is a document:{FAKE_DOCUMENT}")
-        parts.append(f"Here is a document:{IT_SECURITY_POLICY}")
+        for doc in (documents if documents is not None else [FAKE_DOCUMENT, IT_SECURITY_POLICY]):
+            parts.append(f"Here is a document:{doc}")
     if include_employees:
         parts.append("Here are the employee records:\n" + json.dumps(EMPLOYEES, indent=2, ensure_ascii=False))
     parts.append(f"You are speaking with: {current_user}")
@@ -55,6 +71,7 @@ class GuardedChatResult:
     question: str
     current_user: str
     input_filter_triggered: bool
+    context_sha256: str = ""   # hash of the exact context sent, per procedure S3.2
     output_filter_findings: List[FilterResult] = field(default_factory=list)
     raw_output: Optional[str] = None   # what the model actually said (for measurement)
     final_output: str = ""             # what a real caller should be shown
@@ -73,7 +90,11 @@ class GuardedChat:
         self.model = model
         self.client = ollama.Client(timeout=timeout)
         self.input_filter = PromptInjectionFilter()
-        self.output_filter = OutputInjectionFilter()
+        # The output filter's leak check uses an embedding similarity signal
+        # alongside its pattern signals. It shares this client rather than
+        # opening its own, and skips that signal entirely if the embedding
+        # model is missing -- the filter degrades, it does not fail.
+        self.output_filter = OutputInjectionFilter(embed_client=self.client)
 
     def ask(
         self,
@@ -81,10 +102,16 @@ class GuardedChat:
         current_user: str = "Elena Kowalski",
         include_documents: bool = True,
         include_employees: bool = True,
+        documents: Optional[List[str]] = None,
     ) -> GuardedChatResult:
         input_triggered = self.input_filter.detect_injection(question)
 
-        context = build_context(current_user, include_documents, include_employees)
+        context = build_context(current_user, include_documents, include_employees, documents)
+        # Recorded per generation so a test whose setup silently failed to
+        # take effect is distinguishable from a test that passed: if the
+        # context never changes across an indirect-injection matrix, the
+        # payload never arrived. That failure has happened here before.
+        context_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"{context}\n\nQuestion: {question}"},
@@ -101,6 +128,7 @@ class GuardedChat:
                 question=question,
                 current_user=current_user,
                 input_filter_triggered=input_triggered,
+                context_sha256=context_hash,
                 error=str(e),
                 final_output=SAFE_REFUSAL,
             )
@@ -110,6 +138,7 @@ class GuardedChat:
             question=question,
             current_user=current_user,
             input_filter_triggered=input_triggered,
+            context_sha256=context_hash,
             output_filter_findings=findings,
             raw_output=raw_output,
         )

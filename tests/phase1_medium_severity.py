@@ -1,4 +1,25 @@
-"""Phase 1 of the full procedure-compliant test run (evaluation/security_test_procedure.md).
+"""SUPERSEDED BY run_suite.py -- DO NOT RE-RUN. Kept only as the record of
+how tests/phase1_results.jsonl was produced, because that file is now the
+calibration set for evaluation/detectors/.
+
+Two reasons not to run it:
+
+1. Its category-8 section is broken and its results are VOID. write_policy()
+   rewrites document.py on disk and then calls GuardedChat.ask(), but
+   guarded_chat.py binds FAKE_DOCUMENT and IT_SECURITY_POLICY at module
+   import time and nothing reloads the module, so the rewritten file is
+   never read. All 15 of its category-8 generations recorded a clean pass
+   without any injection payload reaching the model (procedure §10.1a).
+   run_suite.py passes the poisoned document into the call instead, via
+   build_context(documents=...), which cannot silently no-op.
+
+2. It writes to document.py. The restore is in a finally block, but a hard
+   kill between the write and the restore leaves the project's real
+   document with a test payload in it.
+
+Original description follows.
+--------------------------------------------------------------------------
+Phase 1 of the full procedure-compliant test run (evaluation/security_test_procedure.md).
 
 Covers, all through the filtered pipeline (guarded_chat.GuardedChat, per
 Sec 2.1 -- post-filter):
