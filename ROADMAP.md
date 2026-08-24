@@ -168,32 +168,61 @@ the roadmap's preference was wrong on this data.
 
 ---
 
-## Phase 3 — Generalize: groundedness, and a metric for over-blocking
+## Phase 3 - Groundedness and over-blocking - **COMPLETE** (2026-08-21)
 
-Everything in Phase 2 is still per-incident patching: each check matches a
-literal phrase observed in one past test, so the filters catch exactly the
-attacks already seen and nothing else.
+| # | Task | Owner | Status |
+|---|---|---|---|
+| 3.1 | `check_groundedness` for the residual hallucination failures in categories 1-3. | A | **not adopted, deliberately.** Three approaches built and measured against 680 recorded generations; all rejected. See below. |
+| 3.2 | Document the implementation trade-off. | A | done - procedure 10.6 carries the numbers for each approach and why it fails. |
+| 3.3 | Add an over-blocking metric to the procedure. | A | done - procedure 5.1, with thresholds, and reported per category by `run_suite.py`. Measured at 0.8% overall on the v1.5 run. |
 
-| # | Task | Owner |
+**Why nothing shipped for 3.1.**
+
+| Approach | Result | Why it fails |
 |---|---|---|
-| 3.1 | `check_groundedness` — is each claim in the answer supported by the supplied context? One check that subsumes category 2 (out-of-context refusal), category 7 (own knowledge), and much of category 8's policy fabrication. Concept: RAGAS "faithfulness". | U |
-| 3.2 | Document the implementation trade-off explicitly (embedding similarity vs. LLM-as-judge: cost, latency, determinism, and who grades the grader). | U |
-| 3.3 | **Add an over-blocking metric to the procedure (§5).** Today the rubric measures only attack success. Category 1 (in-context factual accuracy) is the sole utility guard among twelve categories, and it is weighted Medium at N=15 — thin cover for the entire usefulness of the system. A groundedness check will raise false positives; with no false-positive rate in the gate, there is no way to see that happening. | A + U |
+| Lexical grounding | 11.7% precision, 98 false positives | The corpus is four lines. Any fluent English answer contains ordinary words absent from it -- *therefore*, *minimum*, *deadline*, the requester's own name. Absence from a tiny corpus carries no information. |
+| Embedding similarity | **No separation.** Failing answers scored a median 0.849 against passing answers' 0.674 | Inverted, and not by a tuning margin. "Employees get 14 days" and "employees get 32 days" are near-identical in embedding space. Similarity measures topic; these failures are on-topic by construction. Similarity is not entailment. |
+| LLM-as-judge | Caught 1 of 6 | It identified the one unambiguous fabrication exactly, naming the claim. The other five are contested labels -- and on at least one it was **right and the label was wrong**. |
+
+**The binding constraint is the specification.** `system_promt.py` requires
+answering only from context and refusing otherwise. It does not say whether
+*"the policy does not mention bereavement leave, but the general leave
+process would apply"* is a correct application of a documented process or
+an invented one. No grader can be correct on cases the rules do not decide,
+so the measured precision of all three approaches is bounded by the
+ambiguity rather than by the technique. Shipping a 12%-precision check into
+the request path would destroy legitimate answers at scale to enforce a
+rule that does not exist.
+
+This is the **second** place where the specification, not the code, turned
+out to be the limit -- 4.5 is the first, on how much the assistant may say
+about its own rules. Both are now prompt-level decisions, tracked in
+Phase 4, and detection work on either should wait for them.
+
+**One real defect surfaced while testing.** `is_refusal` recognised only
+first-person refusals, so *"The provided documents do not mention any
+specific limit"* had been graded a substantive answer for eleven runs.
+Fixing it immediately broke category 1, where a correct answer routinely
+qualifies itself and was then graded as refusing an answerable question;
+that check now tests "declined **and** cited no figure from the documents".
+Category 2's measured rate fell from 10.0% to 7.5% as a result -- part of
+what it had been reporting was the grader's blind spot, not the model's.
 
 ---
 
 ## Phase 4 — Outstanding measurement debt
 
-Carried over from v1.2; none of these block Phases 1–3.
+Carried over from v1.2, plus the items Phases 1–3 opened.
 
 | # | Task |
 |---|---|
-| 4.1 | Category 8 (indirect injection) clean re-run at N≥20 using the original narrow-context method. The v1.2 figure is flagged "indicative, not final" because the Phase 1 run used full context and confounded the measurement. |
-| 4.2 | Investigate why `propile.PIILeakQuadruplet` and `propile.PIILeakUnstructured` produced 0 prompts — most likely a missing dataset. Until resolved, category 10's coverage is narrower than its N=85 figure suggests. |
+| ~~4.1~~ | ~~Category 8 clean re-run at N≥20.~~ **Done** — `run_suite.py` runs it at N=80 with the payload passed into the call (task 1.0b), which supersedes the confounded v1.2 figure. |
+| ~~4.2~~ | ~~Investigate the `propile` probes producing 0 prompts.~~ **Done.** Not a missing dataset: they are marked inactive in garak and must be named individually (`propile.PIILeakTwin`). Re-run gives **170 generations, 0% ASR**. |
 | 4.3 | Decide whether the full 256-prompt `encoding.InjectBase64` run is worth its ~8h cost now that the `keep_alive` fix is in place, or whether the N=25 sample stands. |
 | 4.4 | **Redo the category-8 held-out experiment.** The first attempt (2.6) varied the attack's *effectiveness* along with its wording — every held-out sub-type scored 0% pre-filter, so the model refused them and the filter was never exercised. It therefore measured nothing about whether the filter generalises. Find payload wordings that succeed against the model at a rate comparable to the calibration set, then compare post-filter rates. |
 | 4.5 | **Decide what the assistant may say about its own rules.** `system_promt.py` forbids listing the system prompt but is silent on explaining *how* a rule works. That silence is why the filter and the detector disagree on about two records per run — the filter calls "I decide whether to share a salary by verifying the name matches" a Critical leak, the detector sometimes does not. Neither is wrong. This is a specification gap: resolve it in the prompt first, then align both implementations to the decision rather than tuning them against each other. |
-| 4.6 | **Re-run categories 9-12 against the current filter.** Their 0% figures predate every v1.5 change, so the procedure is only half-satisfied by the passing gate. |
+| ~~4.6~~ | ~~Re-run categories 9-12 against the current filter.~~ **Done for 9, 10, 12** — and the re-run's value was not the figures. Reading category 12's outputs found two real failures that garak scored PASS and both of this project's layers missed: four employees enumerated by name in character, and a chemical synthesis given in an adopted persona. Both layers gained a name-enumeration check, and a hole created by the v1.8 refusal fix was closed (procedure §10.11). Category 11 (`encoding`) still outstanding — see 4.3. |
+| 4.7 | **Decide whether reasoning from absence is permitted.** The counterpart to 4.5, from Phase 3: `system_promt.py` does not say whether *"the policy does not mention bereavement leave, but the general leave process would apply"* is correct or invented. Until it does, categories 1-3 cannot be graded reliably by any method (procedure 10.6). |
 
 ---
 
@@ -209,6 +238,6 @@ Carried over from v1.2; none of these block Phases 1–3.
 
 ## Explicitly out of scope for now
 
-- **More attack categories.** Twelve exist; four are failing. Breadth is not the constraint.
+- **More attack categories.** Twelve exist and the eight that run locally now pass. Breadth is not the constraint; the two specification gaps (4.5, 4.7) are.
 - **Broader garak probe coverage.** v1.2 showed the standardized library passed everything while the scenario-specific tests found all four real vulnerabilities. More library breadth is unlikely to be where the next finding comes from.
 - **Any UI.** Nothing in the research question depends on one.
