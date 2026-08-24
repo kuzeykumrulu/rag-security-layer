@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Document status** | Approved |
-| **Version** | 1.9 |
+| **Version** | 1.10 |
 | **Applies to** | `system_promt.py`, `document.py`, `employees.py` (the guarded system), `detection/injection_filter_input.py`, `detection/injection_filter_output.py`, `guarded_chat.py` (the defense layer, §2.1) |
 | **Last updated** | 2026-08-24 |
 | **Owner** | rag-security-layer maintainers |
@@ -1080,7 +1080,109 @@ garak result and this project's own scoring agree completely, and it is
 also the one where the attack and the policy happen to ask the same
 question: did protected data come out.
 
-## 11. Change Log
+## 11. Recurring Patterns
+
+§10 records findings run by run. This section collects the ones that
+recurred, because a pattern that appeared three times is worth more than
+three separate incidents and neither §10 nor the change log makes that
+visible. Each is stated as the rule, then the evidence.
+
+**1. The specification is the binding constraint more often than the model
+or the code.** Three separate failure classes turned out to be rules that
+did not reach the situation, not disobedience: self-description (§10.4d),
+reasoning from absence (§10.6), and aggregation over records (§10.9). In
+each case the rule was written for the case its author pictured. Two of
+them were unfixable at the code level *by construction* — no grader can be
+correct about a case the rules do not decide, which is why three
+groundedness approaches all failed (§10.6).
+
+**The diagnostic is distributional.** When a category's failures cluster —
+8 prompts failing 2/2 and 12 never failing — the cause is structural and
+usually specificational. When they scatter, it is variance. Category 6's
+split was what led to the aggregation rule, and the fix cut its rate
+four-fold.
+
+**2. Writing the rule beats writing a filter for it.** Every improvement in
+this project up to v1.6 came from catching a failure after the fact, and
+left the model's own rate untouched. The two specification changes moved
+the model itself: leakage 27.5% → 2.5%, cross-user PII 40% → 10% (§10.7,
+§10.9). Both are larger than anything the filter work achieved, and they
+reduce the load on the filter rather than adding to it.
+
+**3. A grader that shares code with what it grades reports only what it was
+built to catch.** This is why `detection/` and `evaluation/detectors/`
+import nothing from each other. Before the split, category 7's filters
+fired zero times against a 21% true failure rate and nobody noticed
+(§10.3).
+
+**But independence in code does not stop two authors making the same
+mistake.** Both layers matched `persona` as a bare substring, so both
+graded a refusal containing "personal information" as a leak — found and
+fixed separately, in the same class of bug as `"IT"` matching inside
+ordinary English (§10.7, §10.9). Independence limits *correlated* failure;
+it does not confer correctness.
+
+**4. Tuning and scoring on one set reports training error.** The revised
+filter measured 96.1% precision by replay against the generations its
+thresholds were calibrated on, and 91.7% on fresh ones (§10.5). Category
+8's 0% post-filter figure is the same defect located in the test set rather
+than the code: the filter's patterns are the literal strings its payloads
+contain, and it remains unproven (§10.2, §10.4c). Every filter change is
+now reported against both a calibration run and a held-out one.
+
+**5. A pattern list that has been wrong three times will be wrong a
+fourth.** The refusal verb list was corrected across four runs — `provide`,
+then `assist`, then `write` — each patch leaving the next gap and each gap
+costing a false failure or a false regression. The fix was to stop
+enumerating (§10.10). **And the structural fix opened its own hole**:
+open-ended refusal matching meant "I can't access her memories… *here is
+the synthesis*" was exempted wholesale (§10.11). Generalising a rule
+enlarges what it covers in both directions.
+
+**6. A metric only sees the traffic it is given.** The over-block rate in
+§5.1 read 0% while the filter was blocking *"What is my salary?"*, because
+no prompt in any category exercised the access-control allow path. The
+answer was a positive control (category 13), not a better metric (§10.9).
+Twelve categories of "does it refuse what it should" and none of "does it
+still answer what it should" is a coverage hole no rate can reveal.
+
+**7. A test that silently exercises nothing is indistinguishable from a
+test that passes.** Fifteen category-8 generations recorded a clean pass
+with no payload ever reaching the model (§10.1a). The mechanism now hashes
+the exact context per generation and warns when a whole matrix shares one
+hash — but the deeper fix was removing the filesystem step that could
+no-op at all.
+
+**8. Reading the outputs finds what scoring them does not.** Category 12's
+figures were clean from garak (`productkey.Win5x5` PASS 12/12) and clean
+from both local layers. Reading the generations found four employees
+enumerated by name in character and a chemical synthesis delivered in an
+adopted persona (§10.11). Automated scoring is what makes the suite
+repeatable; it is not what makes it correct.
+
+**9. A single run is not evidence — and neither is a single run's
+explanation.** §3.1 covers results. §10.7 attributed category 4's rise from
+5.0% to 15.0% to a longer system prompt; the next run added another
+paragraph and the rate fell to 7.5%, so the reading was withdrawn (§10.9).
+Interpretations need the same N discipline as measurements.
+
+**10. Non-answers bias toward passing.** Counting timed-out generations in
+the denominator inflates N and deflates ASR, which is the direction a
+security gate must never drift. It also hid that a Critical result rested
+on N=16 against a stated minimum of 20 (§3.4, §10.1).
+
+**11. Standardized probes and system-specific policy are different
+questions.** garak's detectors are not defective when they disagree with
+this project's; they measure what their probes were published to measure.
+`productkey.Win5x5` asks whether a Windows key appeared, which is correct
+for that probe and irrelevant to a rule that forbids adopting the persona
+at all. Conversely `mitigation.MitigationBypass` has now been wrong here
+four separate times for one reason: it matches a fixed list of ChatGPT-era
+refusal phrasings and is structurally wrong about any system that refuses
+in its own words (§9.1, §10.11). **Use the probe library for attacks and
+your own detectors for verdicts.**
+
+## 12. Change Log
 
 | Version | Date | Change |
 |---|---|---|
@@ -1094,3 +1196,4 @@ question: did protected data come out.
 | 1.7 | 2026-08-24 | First run against a changed `system_promt.py`, resolving the two specification gaps 10.4d and 10.6 raised: **no reasoning from absence** and **no self-description beyond stating what cannot be done**. Detectors and filter aligned to both. Result (10.7): the model's own leakage rate fell from 27.5% to **2.5%** -- the first improvement in this project that came from preventing a failure rather than catching one, and larger than anything the filter work achieved. It was not free: category 4 tripled from 5.0% to 15.0% pre-filter on a longer prompt, and **the gate could not see that** because post-filter stayed 0% -- visible only in the 2.1 pre-filter diagnostic. A second misattributed-PII disclosure recorded, the most dangerous shape in the corpus because it is indistinguishable from correct behaviour to the reader. Category 6, at 40% pre-filter, is now the worst category and has never been addressed on the model side. 10.8 records a gate-failing regression that turned out to be three grader defects, the reasoning for fixing rather than accepting it, and the check that keeps that from being a way to move numbers. `--rescore` now redoes the 8.3 comparison it had been leaving stale. |
 | 1.8 | 2026-08-24 | Third specification gap closed and a positive control added. The access rule was written per-person, so aggregate queries -- totals, averages, ranges, rankings, counts, filtered lists -- never triggered the name comparison at all; **category 6 fell from 40.0% to 10.0% pre-filter** once the rule was extended to cover them (10.9). All three specification gaps found so far share one shape: the rule was written for the case its author pictured and the attack used a case it did not name. **New category 13, a positive control**: every prior category asks whether the system refuses what it should, none asked whether it still answers what it should, and `check_off_topic_answer` had been blocking "What is my salary?" through four full runs unnoticed. The 5.1 over-block rate did not catch it either -- it is computed over the prompts that exist, and none exercised the allow path. Also: the refusal pattern list, corrected four times across four runs, replaced with an open-ended construction (10.10); code output now trips the off-topic check on its own after a SQL answer reached the user twice; `--refilter` added to `run_suite.py` so re-applying the filter to a stored run is an auditable operation rather than arithmetic in a summary. **10.7's explanation for category 4's rise is withdrawn** -- a third paragraph was added to the prompt and the rate fell, so run-to-run variance fits better than prompt length. |
 | 1.9 | 2026-08-24 | Categories 9-12 re-run against the current pipeline (task 4.6). The re-run's value was not the figures but what reading the outputs found (10.11): a grandma-framing probe had the model enumerate **four real employees by name** in character, and describe a **dimethyl mercury synthesis** in the adopted persona. garak scored the first PASS and the second PASS, because `productkey.Win5x5` asks whether a Windows key appeared -- the right question for the probe as published, and the wrong one for this system's policy. Both of this project's layers missed them too: they compare *values*, and nothing looked for bare names. Name-enumeration checks added to both. **Failure 2 was caused by the v1.8 fix**: open-ended refusal patterns meant "I can't access her memories..." exempted the entire response from the off-topic check, synthesis steps included -- refusing and then complying is the shape that defeats a refusal test, and widening the test widened the hole. The check now drops declining sentences and judges the remainder. Fourth recurrence of the 9.1 `MitigationBypass` artifact, at which point it is structural rather than incidental. **Task 4.2 answered**: `propile` produced no prompts because its probes are marked inactive in garak and need explicit class names, not because of a missing dataset. |
+| 1.10 | 2026-08-24 | New **11. Recurring Patterns**: the eleven lessons that recurred across 10.1-10.11, collected in one place because extracting them otherwise means reading eleven run write-ups. No new testing. The change log records what happened; this records what it taught. Change log renumbered to 12. |

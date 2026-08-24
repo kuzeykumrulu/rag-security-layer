@@ -157,6 +157,27 @@ things:
   looks like a benign non-answer. It is not a data point — exclude it from
   any rate you compute (procedure §3.4). 12 of 187 generations in the
   v1.2 assessment were timeouts.
+- **Some garak probe families are inactive and produce nothing when named
+  as a family.** `--probes propile` exits with "all plugins in
+  'probes.propile' are marked inactive"; the classes must be named
+  individually (`--probes propile.PIILeakTwin,propile.PIILeakTriplet`).
+  This was misdiagnosed as a missing dataset for several revisions, and it
+  cost category 10 half its coverage. Check with
+  `python -c "import garak._plugins as P; print([n for n,a in P.enumerate_plugins('probes') if 'propile' in n])"`.
+- **Do not pipe a garak run through `grep`.** The pipeline's exit status
+  comes from the last command, so a garak failure reports success and the
+  error scrolls past unmatched. One scan appeared to complete and had
+  produced no report at all. Redirect to a file, or run it bare.
+- **Analysis scripts that print model output need
+  `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`.** The
+  console is cp1254; a single emoji in a generation kills the script
+  mid-loop, after the model time has already been spent.
+- **`run_suite.py --rescore` re-judges with the current detectors;
+  `--rescore --refilter` also re-applies the current output filter.** The
+  filter is a pure function of `raw_output`, so refiltering reproduces
+  exactly what a fresh run would have produced *for those generations* —
+  but it does not re-sample the model, so it can never stand in for a run
+  after a change to `system_promt.py`, `document.py` or `employees.py`.
 - `attacks\` and `logs\` were removed in the v1.3 cleanup; they had been
   empty since the original layout. `detection\` is *not* empty — it holds
   both filter layers and is central to the pipeline.

@@ -6,6 +6,48 @@ v1.2, which returned a version verdict of **FAILED** — five categories over
 threshold and four open vulnerabilities (§2.2). Phase 0 is closed out as
 procedure v1.3; section references below are to that version.
 
+## Where this stands (2026-08-24)
+
+Phases 0-3 complete; Phase 4 all but two items. Procedure v1.2 -> v1.10.
+The gate went **FAILED -> PASSED** across nine categories, and the record
+of how is in procedure 10.1-10.11 with the transferable lessons collected
+in 11.
+
+**The state worth knowing before picking anything up:**
+
+- The suite runs in one command (`run_suite.py`), assigns verdicts with
+  detectors rather than by hand, and enforces the regression rule. A run
+  is ~400 generations and ~55 minutes.
+- Verdicts come from `evaluation/detectors/`, which imports nothing from
+  `detection/`. That separation is load-bearing -- see 11.3 -- and should
+  not be collapsed for convenience.
+- Both layers are validated against `tests/*.jsonl`, where every record
+  carries a hand-graded `gt` block. `python -m evaluation.detectors.score`
+  reports precision and recall against it. **Run this after any detector
+  change**; it is the check that stops grader edits from becoming a way to
+  move numbers.
+- Three of the biggest wins were specification changes, not code (11.1,
+  11.2). If a category fails in a clustered pattern, look at the rule
+  before the filter.
+
+**Next, in the order I would take them:**
+
+1. **4.4 -- redo the category-8 held-out experiment.** The most valuable
+   remaining item. Category 8's 0% post-filter is still unproven: the
+   filter's patterns are the literal strings its own payloads contain
+   (11.4). This matters more than it looks, because category 12 showed
+   exactly this shape -- clean figures, two real failures found only by
+   reading the outputs (11.8). We do not know whether category 8 is the
+   same.
+2. **4.3 / category 11 -- re-run `encoding` against the current filter.**
+   The last gap between "PASSED on nine categories" and a full-procedure
+   pass. Mechanical; the N=25 sample is defensible if the full 256 is not
+   worth ~8 hours.
+3. **0.4 -- decide whether `test_connection.py` stays.** Small.
+4. **Phase 5** once the gate is fully green.
+
+---
+
 **Guiding principle:** the procedure is the contract; the codebase must be
 able to fulfil what the procedure promises before anything new is added.
 Several things the procedure mandates (§3.2 run metadata, §7 per-generation
