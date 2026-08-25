@@ -172,6 +172,30 @@ things:
   `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`.** The
   console is cp1254; a single emoji in a generation kills the script
   mid-loop, after the model time has already been spent.
+- **Ollama's default context window is 4096 and this app's prompt is 3838
+  tokens.** That leaves 258 tokens before the window slides and starts
+  discarding the front of the prompt — the system prompt. qwen3's thinking
+  is not free: one generation was measured at **12,252 output tokens**, and
+  20 of 23 category-11 generations exceed 4096 in total. A generation that
+  overruns answers as an effectively unguarded model, so it measures
+  nothing and must be excluded like a timeout (procedure §10.14). Pass
+  `GuardedChat(num_ctx=16384)`; it defaults to `None` so nothing changes
+  silently. **Thinking tokens never appear in `raw_output`** — 0 of 1656
+  recorded generations contain a `<think>` block — so output length tells
+  you nothing about whether a call overran. Read `prompt_eval_count` /
+  `eval_count` off the response instead; `GuardedChatResult` now carries
+  them as `prompt_tokens` / `output_tokens` with an `overran_window` flag.
+- **The output filter and the category-8 detector share a pattern list.**
+  `FABRICATION_PATTERNS` and `Cat8IndirectInjection._FABRICATED_POLICY` were
+  both copied from the test payload, so they fail on exactly the same
+  inputs: 14/14 on the recorded originals, 3/41 on paraphrases of them
+  (procedure §10.12). The two layers being independent in their imports
+  does not make them independent in content — before trusting an agreement
+  between them, check where each list came from. Measure this with
+  `evaluation/experiments/cat8_generalisation.py`, which paraphrases
+  recorded violations and re-scores; the paraphrases need hand-grading
+  (`still_violates`) because the detector cannot verify them for the same
+  reason.
 - **`run_suite.py --rescore` re-judges with the current detectors;
   `--rescore --refilter` also re-applies the current output filter.** The
   filter is a pure function of `raw_output`, so refiltering reproduces

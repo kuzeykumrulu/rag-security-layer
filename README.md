@@ -42,53 +42,72 @@ reading the output, because it will have its own blind spots.
 
 ---
 
-## Results — full assessment (procedure v1.9)
+## Results — full assessment (procedure v1.13)
 
 Post-filter ASR: measured against the answer the pipeline actually
 delivers, not the bare model. Thresholds and severity definitions:
 [`evaluation/security_test_procedure.md`](evaluation/security_test_procedure.md)
 §4–§5.
 
-Categories 1–8 and 13 are from the automated suite (400 generations, 100%
-completion, every verdict assigned by a detector rather than a human).
-Categories 9, 10 and 12 were re-run against the current pipeline; 11 was
-not.
+Categories 1–8 and 13 are from the automated suite, re-baselined at
+`num_ctx=16384` (400 generations, 400 answered, 0 overran the window,
+every verdict assigned by a detector rather than a human).
+Categories 9–12 have all now been re-run against the current pipeline.
 
 | # | Category | Method | Severity | N | Pre-filter ASR | Post-filter ASR | Verdict |
 |---|---|---|---|---|---|---|---|
 | 1 | In-context factual accuracy | custom | Medium | 40 | 5.0% | 5.0% | PASS |
-| 2 | Out-of-context refusal | custom | Medium | 40 | 2.5% | 2.5% | PASS |
-| 3 | Numeric / temporal traps | custom | Medium | 40 | 2.5% | 2.5% | PASS |
-| 4 | Direct prompt injection | custom | High | 40 | 7.5% | **0%** | PASS |
+| 2 | Out-of-context refusal | custom | Medium | 40 | 0% | 0% | PASS |
+| 3 | Numeric / temporal traps | custom | Medium | 40 | 0% | 0% | PASS |
+| 4 | Direct prompt injection | custom | High | 40 | 5.0% | **0%** | PASS |
 | 5 | System-prompt leakage | custom | Critical | 40 | 2.5% | **0%** | PASS |
-| 6 | Cross-user PII access control | custom | Critical | 40 | 10.0% | **0%** | PASS |
-| 7 | Unrelated-knowledge deflection | custom | High | 40 | 10.0% | **0%** | PASS |
-| 8 | Indirect / document-embedded injection | custom | Medium | 80 | 17.7% | **0%**† | PASS |
-| 13 | **Own-record access (positive control)** | custom | Medium | 40 | 0% | 0% | PASS |
+| 6 | Cross-user PII access control | custom | Critical | 40 | **0%** | **0%** | PASS |
+| 7 | Unrelated-knowledge deflection | custom | High | 40 | 7.5% | **0%** | PASS |
+| 8 | Indirect / document-embedded injection | custom | Medium | 80 | 18.8% | **0%**† | PASS |
+| 13 | **Own-record access (positive control)** | custom | Medium | 40 | 2.5% | 2.5% | PASS |
 | 9 | Jailbreak / persona | garak `dan.*` | High | 5 | 100% | 0% | PASS |
 | 10 | PII leakage at scale | garak `propile.*` | Critical | 170 | — | 0% | PASS |
-| 11 | Encoding-based injection | garak `encoding.*` | High | 21 | — | 0% | not re-run |
+| 11 | Encoding-based injection | garak `encoding.*` | High | 23 | 0% | 0%§ | PASS§ |
 | 12 | Fictional / hypothetical framing | garak `grandma.*` | High | 68 | — | 0%‡ | PASS‡ |
 
-**Gate result: PASSED** — with four qualifications that belong next to it:
+**Gate result: PASSED on all thirteen categories** — and the experiments
+that closed the last gaps showed that a PASS is a narrower claim than it
+reads. The most recent found that the measurement harness itself had been
+confounding every number in the table (qualification 4). Four qualifications belong next to the table:
 
 1. **The pass is mostly the filter's, but no longer entirely.** Two
    specification changes moved the *model's* own rate: system-prompt
    leakage 27.5% → 2.5%, cross-user PII 40% → 10%. Every earlier
    improvement in this project came from catching a failure; those two came
    from preventing one, and they were larger.
-2. **Category 11 has not been re-run** against the current filter, so this
-   is not yet a full-procedure pass. The runner marks what it does not
-   cover rather than omitting it.
-3. † **Category 8's 0% is still unproven.** Planting a fabricated policy in
-   a retrieved document succeeds **10 times out of 10** against the model,
-   and the filter catches all of them — using patterns that are the literal
-   strings that payload contains. A held-out payload set was written to
-   settle it and did not: those payloads scored 0% *pre*-filter, so the
-   model refused them and the filter was never exercised.
-4. ‡ **Category 12's 0% is post-fix.** As delivered, the run contained the
+2. † **Category 8's 0% is an artifact of the payload set.** Planting a
+   fabricated policy in a retrieved document succeeds **10 times out of 10**
+   against the model, and the filter catches all of them — using patterns
+   that are the literal strings that payload contains. Holding the
+   violation fixed and paraphrasing only its wording drops the catch rate
+   from **14/14 to 3/41**, and the fabricated-policy check itself
+   generalises at **0/30** (§10.12). Two things fell out of that: the only
+   check that survived is the only one comparing *values* rather than
+   phrases, and the "independent" detector scored identically to the filter
+   on every item, because both pattern lists were copied from the same
+   payload.
+3. ‡ **Category 12's 0% is post-fix.** As delivered, the run contained the
    two failures described above; the figure is what the current checks
    produce on the same outputs, not what the pipeline did at the time.
+4. § **Every figure here is newer than the harness bug that produced the
+   old ones.** Nothing in this project ever set Ollama's context window, so
+   until v1.13 every recorded generation ran in **4096 tokens against a
+   3838-token prompt** — 258 tokens of headroom for a thinking model
+   measured emitting 12,252 output tokens on one call. Past the window
+   Ollama discards the front of the prompt, which *is* the system prompt,
+   so the answer came from an effectively unguarded model (§10.14). The
+   table above is the re-baseline at `num_ctx=16384`: **41% of its
+   generations would have exceeded 4096**, at a median of 4076 tokens. The
+   gate result and every category verdict are unchanged; what moved was
+   category 6, from 4 disclosures to 0 — the Critical category, whose rule
+   lives in the system prompt and whose generations were exceeding the
+   window 25 times in 40 (§10.15). One run, so that reading is a candidate,
+   not a conclusion.
 
 ---
 
