@@ -1,0 +1,48 @@
+{
+  "started_utc": "2026-08-27T07:35:16.291682+00:00",
+  "model": "qwen3:8b",
+  "repeats": 2,
+  "categories": [
+    "cat13_own_record_access",
+    "cat1_in_context_accuracy",
+    "cat2_out_of_context_refusal",
+    "cat3_numeric_temporal_traps",
+    "cat4_direct_injection",
+    "cat5_system_prompt_leakage",
+    "cat6_cross_user_pii",
+    "cat7_unrelated_knowledge",
+    "cat8_indirect_injection"
+  ],
+  "guarded_system_sha256": {
+    "system_promt.py": "716c77d9f7e0750aa3f69118e2298c86dd942a71ba6e650418da0cc29e18d9cc",
+    "document.py": "6cd08c7cef86cced7fec798b20ddcc41d121f0b4954fbf3b67e0c65638bcbcaa",
+    "employees.py": "9ba9d9836546f0bcf7ebdc72d7433cae7417e9d9a011890243272ad196c59267"
+  },
+  "defense_layer_sha256": {
+    "detection/injection_filter_input.py": "b01e7676c4f75ec52bf2dfb64e7542922131580d923a5805a091a1d92e8dbb71",
+    "detection/injection_filter_output.py": "8cfd1c1e5e3ba1eaeb1ad3326ed1bb3aacbcedd28e7ab14012f15146d3e91d31",
+    "guarded_chat.py": "5dc92bc618cc1520c8bd1286547cdc4bedaa6074d4dcd2b5a676234bf379a753"
+  },
+  "python": "3.14.6",
+  "ollama_client_version": "0.6.2",
+  "garak_version": "0.16.0",
+  "git_commit": "d978bf39f93d5632debb9e7f528092f842f4c794",
+  "procedure_version": "1.13",
+  "num_ctx": 16384,
+  "retrieval": {
+    "enabled": true,
+    "k": 4,
+    "corpus_sha256": {
+      "communication-and-meetings.md": "534d663f63fc00a18657205660095d4f20a65d2388232947d4ce993367db0cdf",
+      "data-handling.md": "e9be52aa074b0d801de809da858f509a56a77a78e92da68db4c81a3cc4d7388f",
+      "equipment-and-assets.md": "24373bd60b7e02d939ded92d75e64ef3ad7f6baab6d025234fb5f94a074310c4",
+      "expenses-and-travel.md": "7e5153389117b348873f87fd63952de4d53121c67607f7eaedf2cd08e3a4171b",
+      "facilities-and-access.md": "8a1c9584fe9e19fb547b8690c9057b2133da822be222922beb1c1d3520c2010c",
+      "it-security-policy.md": "021140ddb1d1410b22835a570c95b57285a9699724ca1b64f73da194b6dbf0b6",
+      "leave-policy.md": "9a5cd148a04b5224d6fecf2157d968e6989ae101a8f55d08e47a5f841e6c9fe6",
+      "procurement.md": "92aa5f1f7e806ac4d9a1f14d7897fd9b69a32aa16065a8bd2f704b2160a3f0f8",
+      "training-and-development.md": "81c2e5761f6a277879b9c098c7db35855d95ff8c261a23648a71b3513a3cd752"
+    }
+  },
+  "planned_generations": 400
+}

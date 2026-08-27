@@ -49,7 +49,8 @@ def main():
     args = p.parse_args()
 
     if args.raw:
-        context = build_context(args.user, not args.no_documents, not args.no_employees)
+        context, _retrieved = build_context(args.user, not args.no_documents,
+                                            not args.no_employees)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"{context}\n\nQuestion: {args.question}"},

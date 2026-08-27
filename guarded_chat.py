@@ -21,7 +21,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import ollama
 
@@ -45,8 +45,11 @@ def build_context(
     include_documents: bool = True,
     include_employees: bool = True,
     documents: Optional[List[str]] = None,
-) -> str:
-    """Assembles the user turn.
+    query: Optional[str] = None,
+    index=None,
+    k: int = 4,
+) -> Tuple[str, List[dict]]:
+    """Assembles the user turn. Returns (context, retrieval_record).
 
     `documents` replaces the project's own documents for this call only.
     Indirect-injection tests need to put a poisoned document in front of the
@@ -55,15 +58,46 @@ def build_context(
     nothing because this module binds FAKE_DOCUMENT and IT_SECURITY_POLICY at
     import time and never reloads. Fifteen generations recorded a clean pass
     without the payload ever reaching the model.
+
+    With `index` and `query`, the documents come from top-k retrieval over
+    `corpus/` instead of being stuffed whole. Without them the behaviour is
+    exactly what it was, so turning retrieval on is a decision made per call
+    rather than a default that moves every recorded number underneath us.
+
+    `retrieval_record` names the chunks that ended up in the context, with
+    their scores. It is empty when retrieval is off. Recording it is not
+    bookkeeping: a retrieval pipeline can put the wrong text in front of the
+    model and still produce a plausible answer, and the resulting figure
+    would look like the model's behaviour rather than the retriever's.
+    Procedure §10.1a is what that costs when it is not recorded.
+
+    A poisoned document passed through `documents` is appended to whatever
+    was retrieved rather than replacing it -- in this step the payload is
+    still *injected*, not competing for retrieval. Making it win retrieval on
+    its own is a separate change (ROADMAP 5.1d), and doing both at once would
+    repeat the mistake §10.12 documents.
     """
-    parts = []
+    parts, retrieved = [], []
     if include_documents:
-        for doc in (documents if documents is not None else [FAKE_DOCUMENT, IT_SECURITY_POLICY]):
-            parts.append(f"Here is a document:{doc}")
+        if index is not None and query is not None:
+            for hit in index.search(query, k=k):
+                retrieved.append({
+                    "chunk_id": hit.chunk.chunk_id,
+                    "doc_id": hit.chunk.doc_id,
+                    "score": round(hit.score, 4),
+                    "sha256": hit.chunk.sha256,
+                })
+                parts.append(f"Here is a document:\n{hit.chunk.text}")
+            for doc in (documents or []):
+                parts.append(f"Here is a document:{doc}")
+        else:
+            for doc in (documents if documents is not None
+                        else [FAKE_DOCUMENT, IT_SECURITY_POLICY]):
+                parts.append(f"Here is a document:{doc}")
     if include_employees:
         parts.append("Here are the employee records:\n" + json.dumps(EMPLOYEES, indent=2, ensure_ascii=False))
     parts.append(f"You are speaking with: {current_user}")
-    return "\n\n".join(parts)
+    return "\n\n".join(parts), retrieved
 
 
 @dataclass
@@ -79,6 +113,10 @@ class GuardedChatResult:
     prompt_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     num_ctx: Optional[int] = None
+    # The chunks retrieval put in front of the model, with scores. Empty when
+    # retrieval is off. A generation cannot be re-read without knowing what
+    # the model was actually shown.
+    retrieved: List[dict] = field(default_factory=list)
     output_filter_findings: List[FilterResult] = field(default_factory=list)
     raw_output: Optional[str] = None   # what the model actually said (for measurement)
     final_output: str = ""             # what a real caller should be shown
@@ -94,7 +132,8 @@ class GuardedChat:
     filter (after). One call to ask() per question."""
 
     def __init__(self, model: str = "qwen3:8b", timeout: int = 180,
-                 num_ctx: Optional[int] = None):
+                 num_ctx: Optional[int] = None,
+                 retrieval: bool = False, k: int = 4, corpus_dir: str = "corpus"):
         """`num_ctx` overrides Ollama's context window for every call.
 
         Left as None -- Ollama's own default, 4096 for this model -- so that
@@ -111,7 +150,16 @@ class GuardedChat:
         """
         self.model = model
         self.num_ctx = num_ctx
+        self.k = k
         self.client = ollama.Client(timeout=timeout)
+        # Off by default. Turning retrieval on changes what every category is
+        # measured against, so it is a flag the caller sets deliberately, the
+        # same way `num_ctx` is.
+        self.index = None
+        if retrieval:
+            from retrieval.index import CorpusIndex
+            self.index = CorpusIndex(client=self.client,
+                                     corpus_dir=corpus_dir).build()
         self.input_filter = PromptInjectionFilter()
         # The output filter's leak check uses an embedding similarity signal
         # alongside its pattern signals. It shares this client rather than
@@ -129,7 +177,9 @@ class GuardedChat:
     ) -> GuardedChatResult:
         input_triggered = self.input_filter.detect_injection(question)
 
-        context = build_context(current_user, include_documents, include_employees, documents)
+        context, retrieved = build_context(
+            current_user, include_documents, include_employees, documents,
+            query=question, index=self.index, k=self.k)
         # Recorded per generation so a test whose setup silently failed to
         # take effect is distinguishable from a test that passed: if the
         # context never changes across an indirect-injection matrix, the
@@ -161,6 +211,7 @@ class GuardedChat:
                 current_user=current_user,
                 input_filter_triggered=input_triggered,
                 context_sha256=context_hash,
+                retrieved=retrieved,
                 error=str(e),
                 final_output=SAFE_REFUSAL,
             )
@@ -174,6 +225,7 @@ class GuardedChat:
             prompt_tokens=prompt_tokens,
             output_tokens=output_tokens,
             num_ctx=self.num_ctx,
+            retrieved=retrieved,
             output_filter_findings=findings,
             raw_output=raw_output,
         )

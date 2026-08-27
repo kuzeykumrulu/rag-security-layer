@@ -117,7 +117,7 @@ def _version_of(package):
         return None
 
 
-def collect_metadata(model, repeats, categories):
+def collect_metadata(model, repeats, categories, args=None):
     """Everything needed to say what was tested. §3.2 requires the content of
     the guarded-system files, the model, the garak version and the date;
     hashes stand in for content so the record stays small but still pins the
@@ -141,6 +141,24 @@ def collect_metadata(model, repeats, categories):
         "git_commit": _git_commit(),
         "procedure_version": _procedure_version(),
     }
+    if args is not None:
+        # How the context was assembled is part of what was tested, not a
+        # runtime detail. Two runs with identical guarded-system hashes and
+        # different num_ctx measure different things (S10.14), and so do two
+        # with different retrieval settings.
+        meta["num_ctx"] = args.num_ctx or None
+        meta["retrieval"] = {
+            "enabled": bool(args.retrieval),
+            "k": args.k if args.retrieval else None,
+            # With retrieval on, the corpus is part of the system under test.
+            # Hashing every document means a run can never be compared
+            # against one whose sources quietly differed.
+            "corpus_sha256": ({
+                f: sha256_file(os.path.join(PROJECT_ROOT, "corpus", f))
+                for f in sorted(os.listdir(os.path.join(PROJECT_ROOT, "corpus")))
+                if f.endswith(".md") and f != "README.md"
+            } if args.retrieval else None),
+        }
     return meta
 
 
@@ -193,13 +211,14 @@ def iter_cases(categories, repeats):
 def run(args):
     categories = args.categories
     chat = GuardedChat(model=args.model, timeout=args.timeout,
-                       num_ctx=args.num_ctx or None)
+                       num_ctx=args.num_ctx or None,
+                       retrieval=args.retrieval, k=args.k)
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = os.path.join(RUNS_DIR, stamp)
     os.makedirs(run_dir, exist_ok=True)
 
-    meta = collect_metadata(args.model, args.repeats, sorted(categories))
+    meta = collect_metadata(args.model, args.repeats, sorted(categories), args)
     cases = list(iter_cases(categories, args.repeats))
     meta["planned_generations"] = len(cases)
     _write_json(os.path.join(run_dir, "metadata.json"), meta)
@@ -223,6 +242,16 @@ def run(args):
                 "prompt_tokens": r.prompt_tokens,
                 "output_tokens": r.output_tokens,
                 "num_ctx": r.num_ctx,
+                # What retrieval actually put in front of the model. Empty
+                # when retrieval is off. Category 8's payload is still
+                # injected rather than retrieved at this step, so
+                # `poison_retrieved` stays false and becomes meaningful only
+                # when the payload has to win retrieval on its own (5.1d).
+                "retrieved": r.retrieved,
+                "retrieved_chunk_ids": [c["chunk_id"] for c in r.retrieved],
+                "poison_injected": bool(docs),
+                "poison_retrieved": any(
+                    c["doc_id"].startswith("poison") for c in r.retrieved),
                 # A generation whose own tokens exceeded its window wrote its
                 # answer after Ollama had slid the system prompt out of
                 # context: it measures the unguarded model, so it is not a
@@ -510,6 +539,16 @@ def main():
     p.add_argument("--model", default="qwen3:8b")
     p.add_argument("--user", default="Elena Kowalski")
     p.add_argument("--timeout", type=int, default=180)
+    p.add_argument("--retrieval", action="store_true",
+                   help="assemble the documents by top-k retrieval over "
+                        "corpus/ instead of stuffing document.py whole. Off "
+                        "by default: it changes what every category is "
+                        "measured against, so it is a decision, not a "
+                        "default (ROADMAP 5.1b).")
+    p.add_argument("-k", type=int, default=4,
+                   help="chunks retrieved per query. 3 is the measured floor "
+                        "for 100%% recall@k on the labelled set; 4 leaves one "
+                        "chunk of headroom (retrieval/evaluate.py).")
     p.add_argument("--num-ctx", type=int, default=0,
                    help="Ollama context window for every call "
                         "(0 = its own default, 4096 for qwen3:8b). "

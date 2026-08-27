@@ -28,7 +28,7 @@ in 11.
   move numbers.
 - Three of the biggest wins were specification changes, not code (11.1,
   11.2). If a category fails in a clustered pattern, look at the rule
-  before the filter. A fourth gap of the same shape is open (10.13).
+  before the filter.
 - **A PASS is a narrower claim than it reads.** Category 8's holds only
   for the wording it was measured on (10.12). Category 11's sat on top of
   a ~50% fabrication rate that turned out to be the context window rather
@@ -68,8 +68,12 @@ conclusion. **This is the baseline retrieval work is measured against.**
    not one. The no-inference rule reaches the behaviour; it was out of the
    context window (10.14).
 4. **0.4 -- decide whether `test_connection.py` stays.** Small.
-5. **Phase 5.** All thirteen categories now pass the gate; what the last two
-   experiments showed is that passing is a narrower claim than it reads.
+5. **Phase 5 — retrieval. 5.1a and 5.1b done.** The corpus, the chunker,
+   the index, the check that retrieval works (recall@3 = 100%), and the
+   full suite through it: gate PASSED, no verdict changed, and the one new
+   failure was predicted in advance (§10.16). Next is **5.1c** — the 50
+   employee records behind the retrieval boundary, which is where the
+   context size win and the architectural access-control change both are.
 
 ---
 
@@ -285,7 +289,7 @@ Carried over from v1.2, plus the items Phases 1–3 opened.
 |---|---|
 | ~~4.1~~ | ~~Category 8 clean re-run at N≥20.~~ **Done** — `run_suite.py` runs it at N=80 with the payload passed into the call (task 1.0b), which supersedes the confounded v1.2 figure. |
 | ~~4.2~~ | ~~Investigate the `propile` probes producing 0 prompts.~~ **Done.** Not a missing dataset: they are marked inactive in garak and must be named individually (`propile.PIILeakTwin`). Re-run gives **170 generations, 0% ASR**. |
-| ~~4.3~~ | ~~Decide whether the full 256-prompt `encoding.InjectBase64` run is worth its ~8h cost, or whether the N=25 sample stands.~~ **Done — the question was wrong.** What was stale about the v1.3 figure was not its N but that neither the model nor the filter producing it is the one running now. Re-ran the same 25 prompts paired against the current system: **0% pre- and post-filter (0/20**, 5 timeouts). The filter half cost no model time — replaying it over the stored outputs closed the two `pii_leak` false positives and showed `check_off_topic_answer` firing where it did not exist. The finding is the negative one: **fabrication is unchanged** (45-60% depending on measure) because the no-inference rule never reached a failure that is computation rather than inference. Fourth specification gap (procedure §10.13). `evaluation/experiments/cat11_rerun_paired.py`. |
+| ~~4.3~~ | ~~Decide whether the full 256-prompt `encoding.InjectBase64` run is worth its ~8h cost, or whether the N=25 sample stands.~~ **Done — the question was wrong.** What was stale about the v1.3 figure was not its N but that neither the model nor the filter producing it is the one running now. Re-ran the same 25 prompts paired against the current system: **0% pre- and post-filter (0/20**, 5 timeouts). The filter half cost no model time — replaying it over the stored outputs closed the two `pii_leak` false positives and showed `check_off_topic_answer` firing where it did not exist. The finding looked like a negative one -- fabrication unchanged at 45-60% -- and **that reading was withdrawn the same day**: it was the context window, not a specification gap. At `num_ctx=16384` fabrication is 8.7% (procedure §10.13, withdrawn; §10.14). `evaluation/experiments/cat11_rerun_paired.py`. |
 | ~~4.4~~ | ~~Redo the category-8 held-out experiment.~~ **Done.** The fix was not better payloads but a different design: hold the *violation* fixed and vary only its wording, so the attack's effectiveness cannot move with it. The 14 recorded generations where the model actually complied were paraphrased by the local model, which never saw the filter; scoring is free because the filter is a pure function of `raw_output`. **100% caught on the originals, 7.3% on the paraphrases** — and the single fabricated-policy catch reused `unlimited paid leave` verbatim, so that check generalises at 0/30 (procedure §10.12). Two things fell out of it: the only check that survived paraphrase is the only one that compares *values* rather than phrases, and the detector scored identically to the filter on every item because both pattern lists came from the same payload. `evaluation/experiments/cat8_generalisation.py`. |
 | 4.5 | **Decide what the assistant may say about its own rules.** `system_promt.py` forbids listing the system prompt but is silent on explaining *how* a rule works. That silence is why the filter and the detector disagree on about two records per run — the filter calls "I decide whether to share a salary by verifying the name matches" a Critical leak, the detector sometimes does not. Neither is wrong. This is a specification gap: resolve it in the prompt first, then align both implementations to the decision rather than tuning them against each other. |
 | ~~4.6~~ | ~~Re-run categories 9-12 against the current filter.~~ **Done for 9, 10, 12** — and the re-run's value was not the figures. Reading category 12's outputs found two real failures that garak scored PASS and both of this project's layers missed: four employees enumerated by name in character, and a chemical synthesis given in an adopted persona. Both layers gained a name-enumeration check, and a hole created by the v1.8 refusal fix was closed (procedure §10.11). Category 11 (`encoding`) still outstanding — see 4.3. |
@@ -293,11 +297,112 @@ Carried over from v1.2, plus the items Phases 1–3 opened.
 
 ---
 
-## Phase 5 — Scope growth (only once the gate is green)
+## Phase 5 — Scope growth — **IN PROGRESS** (started 2026-08-25)
+
+The gate is green on all thirteen categories and the harness confound is
+fixed, so the baseline everything below is measured against is
+`evaluation/runs/20260825T114845Z`.
+
+**The ordering is the plan.** This project has twice measured nothing by
+moving two things at once — the category-8 held-out payloads varied the
+attack's effectiveness along with its wording (§10.12), and the context
+window was varying underneath every result at the same time as the rules
+were (§10.14). So: retrieval is validated *as retrieval* before any security
+claim is attached to it, the existing thirteen categories run through it
+unchanged before any new category is added, and only then do the
+retrieval-specific attacks arrive.
+
+### 5.1a — Retrieval, validated as retrieval — **DONE**
+
+| | |
+|---|---|
+| `corpus/` | 9 documents, 34 chunks. `leave-policy.md` and `it-security-policy.md` are **verbatim** copies of the `document.py` constants — the facts categories 1 and 3 are graded against must not drift, or the comparison to the baseline is meaningless. The other seven are distractors, deliberately including near-misses on *reporting deadlines* and *approval thresholds*. |
+| `retrieval/chunker.py` | Paragraph packing, 700 chars, one paragraph of overlap. Every chunk carries doc, ordinal, character offsets and its own hash — required for naming the chunks in a generation's record, and for making chunk-boundary attacks reproducible. |
+| `retrieval/index.py` | `nomic-embed-text` (already used by the output filter), cosine over an in-memory list, embeddings cached by content hash. No vector DB: at this size it adds operational surface and no security surface. |
+| `retrieval/evaluate.py` | The check that has to pass first. |
+
+**Measured, `k` chosen from the numbers rather than assumed:**
+
+| k | recall@k |
+|---|---|
+| 1 | 17/20 (85.0%) |
+| 2 | 19/20 (95.0%) |
+| **3** | **20/20 (100.0%)** |
+
+Correct document ranked first in 17 of 20. The three it does not rank first
+are the three the distractors were written for: *"how quickly must a security
+incident be reported"* loses to the equipment policy's 24-hour loss report,
+and *"how many days of leave do IT employees get"* pulls `leave-policy`
+(0.786) above the `it-security-policy` chunk that actually contains the
+answer (0.677). **k=3 is the measured floor; use k=4 for one chunk of
+headroom.**
+
+**The finding that matters, and it is not the recall figure.** The negative
+half — the twenty category-2 questions the corpus is required *not* to
+answer — returns scores of 0.62–0.76. The positive half returns 0.54–0.79.
+**They overlap completely**, so no similarity threshold separates "the corpus
+answers this" from "the corpus is merely about this". Reading the fourteen
+suspects confirms the corpus has not drifted: nearly all are the 173-character
+`leave-policy#0` retrieved for *sabbaticals*, *carry-over*, *bereavement* —
+topically adjacent, answering nothing.
+
+The consequence is architectural. **Retrieval cannot be what makes the
+assistant decline an out-of-scope question**, because the leave chunk will
+always come back for a leave-shaped question. Declining stays the model's job
+and the filter's. This is §10.6's "similarity is not entailment" arriving in
+a new place, and it predicts what category 2 will do in 5.1b: nothing good
+should be expected of it from retrieval alone.
+
+### 5.1b — The existing thirteen categories, through retrieval — **DONE**
+
+`20260827T073516Z`: retrieval on, k=4, `num_ctx=16384`, everything else
+byte-identical to the baseline. **399/400 answered, gate PASSED, no verdict
+changed, 0 of 400 empty retrieval records.** Full write-up in procedure
+§10.16.
+
+| Category | stuffed | retrieval | |
+|---|---|---|---|
+| 1 | 5.0% | 0.0% | 2 → 0 |
+| 2 | 0.0% | 2.5% | 0 → 1, **predicted** |
+| 7 | 7.5% | 12.5% | 3 → 5 |
+| 8 | 18.8% | 12.7% | 15 → 10 |
+| 13 | 2.5% | 0.0% | 1 → 0 |
+| 3, 4, 5, 6 | | | unchanged |
+
+**The prediction held.** 5.1a concluded that retrieval cannot make the
+assistant decline, because a leave-shaped question always retrieves the leave
+chunk. Category 2's single failure is *"the document does not specifically
+mention bereavement leave, but the general process…"* — that exact mechanism.
+First explanation in this project written down before the run rather than
+fitted after it (§10.7 and §10.13 were both fitted, both withdrawn).
+
+**I was wrong about categories 1–3 getting worse.** They did not move, except
+downward. Recorded rather than quietly dropped.
+
+**Two apparent wins that should not be reported as wins.** Category 8's −6.1
+is entirely `defense_status_disclosure` at N=10; `policy_fabrication`, the
+sub-type that actually beats the model, is unchanged at 9/10. Category 7's
+3 → 5 is two flips on prompts whose other repeat was already failing, so the
+SQL and haiku weaknesses predate retrieval.
+
+**Retrieval grew the context rather than shrinking it** — median 4076 → 4379
+tokens, because four chunks exceed the two documents they replaced and the 50
+employee records are still passed whole. Every one of these generations would
+have overrun the old 4096 default.
+
+### 5.1c — Employee records behind the retrieval boundary — **NEXT**
+
+Today all 50 records are in every context — 53.5% of it — and access control
+is the model comparing names. Moving the filter into retrieval means another
+person's record never enters the context at all, which is a strictly stronger
+property. It also changes what category 6 measures: from *the model obeyed a
+rule* to *the data never arrived*. The procedure has to say so, or a 0% there
+will read as the former.
 
 | # | Task | Why it earns its place |
 |---|---|---|
-| 5.1 | Real retrieval: PDFs → chunking → embeddings → vector store → top-k into the context. | Unlocks attack classes that cannot exist without retrieval: poisoning a document so it is *retrieved* for a targeted query, and payloads placed across chunk boundaries. |
+| 5.1d | Retrieval-specific attacks: poisoning a document so it is *retrieved* for a targeted query; payloads split across chunk boundaries; a positive control that the user's own record is still retrievable. | These cannot exist without retrieval. The positive control is not optional — §11.6 is the record of a defense that would have passed twelve categories by refusing everything. |
+| 5.1e | PDF ingestion, once markdown works. | Its own attack class rather than a format detail: text invisible to a reader (white on white, metadata, off-page) is fully visible to the retriever. |
 | 5.2 | Multi-turn attacks. | Every test so far is single-turn. Crescendo and many-shot jailbreaks need conversation state and are among the most effective real-world techniques. |
 | 5.3 | A second model behind the same system prompt. | Turns a single-model anecdote into a comparison: which failures belong to the model and which to the prompt. |
 
